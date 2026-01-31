@@ -63,7 +63,7 @@ async def call_grok(prompt: str) -> str:
         "Content-Type": "application/json"
     }
     payload = {
-        "model": "grok-3-mini",
+        "model": "grok-4-1-fast-reasoning",
         "messages": [{"role": "user", "content": prompt}],
         "temperature": 0.7
     }
