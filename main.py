@@ -56,7 +56,7 @@ async def call_grok(prompt: str) -> str:
         return "❌ Grok API 未配置"
     url = "https://api.x.ai/v1/chat/completions"
     headers = {"Authorization": f"Bearer {GROK_API_KEY}", "Content-Type": "application/json"}
-    payload = {"model": "grok-4-1-fast-reasoning", "messages": [{"role": "user", "content": prompt}], "temperature": 0.7}
+    payload = "model": "grok-4-1-fast-non-reasoning", "messages": [{"role": "user", "content": prompt}], "temperature": 0.7}
     try:
         async with aiohttp.ClientSession() as session:
             async with session.post(url, headers=headers, json=payload, timeout=90) as resp:
