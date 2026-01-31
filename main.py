@@ -40,7 +40,7 @@ async def call_grok(prompt: str, use_search: bool = True) -> str:
     }
     
     payload = {
-        "model": "grok-3-latest",
+        "model": "grok-2-latest",
         "messages": [{"role": "user", "content": prompt}],
         "temperature": 0.7
     }
