@@ -1,6 +1,5 @@
 """
-FlowAI Market Radar + Trading Signal Bot v3.0
-整合版：市場情緒 + Order Flow 交易信號
+FlowAI Market Radar v3.0
 """
 
 import os
@@ -11,10 +10,7 @@ from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 import aiohttp
 
-# ═══════════════════════════════════════════════════════════════════════
 # 配置
-# ═══════════════════════════════════════════════════════════════════════
-
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "")
 GROK_API_KEY = os.getenv("GROK_API_KEY", "")
 ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID", "")
@@ -25,11 +21,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# ═══════════════════════════════════════════════════════════════════════
 # Grok API
-# ═══════════════════════════════════════════════════════════════════════
-
-async def call_grok(prompt: str, use_search: bool = True) -> str:
+async def call_grok(prompt: str) -> str:
     if not GROK_API_KEY:
         return "❌ Grok API 未配置"
     
@@ -40,19 +33,10 @@ async def call_grok(prompt: str, use_search: bool = True) -> str:
     }
     
     payload = {
-        "model": ""model": "grok-beta",",
+        "model": "grok-beta",
         "messages": [{"role": "user", "content": prompt}],
         "temperature": 0.7
     }
-    
-        # 搜尋功能已停用
-    # if use_search:
-    #     payload["search_parameters"] = {
-    #         "mode": "auto",
-    #         "return_citations": True,
-    #         "from_date": datetime.now().strftime("%Y-%m-%d")
-    #     }
-
     
     try:
         async with aiohttp.ClientSession() as session:
@@ -66,10 +50,7 @@ async def call_grok(prompt: str, use_search: bool = True) -> str:
     except Exception as e:
         return f"❌ 錯誤: {str(e)}"
 
-# ═══════════════════════════════════════════════════════════════════════
 # 命令
-# ═══════════════════════════════════════════════════════════════════════
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     welcome = """
 🎯 *FlowAI 市場雷達 v3.0*
@@ -103,178 +84,195 @@ _FlowAI v3.0 - 讓你比市場快一步_
 
 async def btc(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🔶 正在分析 BTC...")
-    prompt = """Search X and web for Bitcoin sentiment now.
+    prompt = """分析目前 Bitcoin 的市場情緒和價格走勢。
 
-Format in Chinese:
+請用以下格式回覆（繁體中文）：
 🔶 BTC 情緒分析
 ━━━━━━━━━━━━━━━━
-📊 情緒：[看漲/看跌] [分數/100]
-💰 價格：$[price]
-🔥 熱門話題：[topics]
-🐋 大戶動態：[whale news]
-💡 建議：[advice]
-⏰ 更新：[time]"""
+📊 情緒：[看漲/看跌/中性]
+💰 目前價格：約 $[price]
+🔥 熱門話題：[最近的新聞或話題]
+💡 建議：[一句話建議]"""
     result = await call_grok(prompt)
     await update.message.reply_text(result)
 
 async def meme(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🐸 正在掃描 MEME...")
-    prompt = """Search for top 5 trending meme coins now.
+    prompt = """列出目前最熱門的 5 個 MEME 幣。
 
-Format in Chinese:
+請用以下格式回覆（繁體中文）：
 🐸 MEME 熱幣 TOP 5
 ━━━━━━━━━━━━━━━━
-1️⃣ $[TICKER] - [why trending] ⚠️[risk]
-2️⃣ ...
-3️⃣ ...
-4️⃣ ...
-5️⃣ ...
+1️⃣ $[TICKER] - [為什麼熱門]
+2️⃣ $[TICKER] - [為什麼熱門]
+3️⃣ $[TICKER] - [為什麼熱門]
+4️⃣ $[TICKER] - [為什麼熱門]
+5️⃣ $[TICKER] - [為什麼熱門]
+
 💡 提醒：MEME 波動大，控制倉位！"""
     result = await call_grok(prompt)
     await update.message.reply_text(result)
 
 async def gold(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🥇 正在分析黃金...")
-    prompt = """Search for gold XAU/USD analysis.
+    prompt = """分析目前黃金 XAU/USD 的走勢。
 
-Format in Chinese:
+請用以下格式回覆（繁體中文）：
 🥇 黃金避險雷達
 ━━━━━━━━━━━━━━━━
-💰 現價：$[price] ([change]%)
-📊 支撐：$[support] | 壓力：$[resistance]
-📰 驅動：[factors]
-🎯 觀點：[outlook]"""
+💰 現價：約 $[price]
+📊 趨勢：[上漲/下跌/盤整]
+📰 驅動因素：[影響金價的因素]
+🎯 短線觀點：[建議]"""
     result = await call_grok(prompt)
     await update.message.reply_text(result)
 
 async def funding(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("💰 正在獲取資金費率...")
-    prompt = """Search crypto funding rates BTC ETH SOL on Binance Bybit OKX.
+    prompt = """說明目前加密貨幣永續合約的資金費率狀況（BTC、ETH、SOL）。
 
-Format in Chinese:
+請用以下格式回覆（繁體中文）：
 💰 資金費率雷達
 ━━━━━━━━━━━━━━━━
-🔶 BTC: Binance [x]% | Bybit [x]% | OKX [x]%
-🔷 ETH: Binance [x]% | Bybit [x]% | OKX [x]%
-🟣 SOL: Binance [x]% | Bybit [x]% | OKX [x]%
-💡 套利提示：[opportunity]"""
+🔶 BTC：[正/負費率，多空傾向]
+🔷 ETH：[正/負費率，多空傾向]
+🟣 SOL：[正/負費率，多空傾向]
+
+💡 套利提示：[如果有套利機會]"""
     result = await call_grok(prompt)
     await update.message.reply_text(result)
 
 async def calendar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("📅 正在獲取經濟日曆...")
-    prompt = """Search important economic events today/tomorrow. Convert to UTC+8.
+    prompt = """列出近期重要的經濟事件和數據發布。
 
-Format in Chinese:
-📅 經濟日曆 (台灣時間)
+請用以下格式回覆（繁體中文）：
+📅 經濟日曆
 ━━━━━━━━━━━━━━━━
-🗓 今日：
-⏰ [time] - [event] [🔴高/🟡中/🟢低]
-🗓 明日：
-⏰ [time] - [event]
-⚠️ 重點：[most important]"""
+🗓 近期重要事件：
+- [事件1] - [日期] [重要性：高/中/低]
+- [事件2] - [日期] [重要性：高/中/低]
+- [事件3] - [日期] [重要性：高/中/低]
+
+⚠️ 重點關注：[最重要的事件]"""
     result = await call_grok(prompt)
     await update.message.reply_text(result)
 
 async def radar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🌐 正在生成全景報告...")
-    prompt = """Create market report: Fear/Greed, BTC/ETH/SOL, top meme, gold, risks.
+    prompt = """提供一份簡短的市場全景報告。
 
-Format in Chinese:
+請用以下格式回覆（繁體中文）：
 🌐 FlowAI 全景報告
 ━━━━━━━━━━━━━━━━
-📊 情緒：[Fear/Greed] [score]/100
-🔶 BTC: [trend]
-🔷 ETH: [trend]
-🟣 SOL: [trend]
-🔥 MEME: $[ticker]
-🥇 黃金: [status]
-⚠️ 風險: [risks]
-💡 建議: [advice]"""
+📊 市場情緒：[恐懼/貪婪/中性]
+
+🔶 BTC：[簡短趨勢]
+🔷 ETH：[簡短趨勢]
+🟣 SOL：[簡短趨勢]
+
+🔥 熱點：[目前市場焦點]
+⚠️ 風險：[需要注意的風險]
+
+💡 建議：[一句話建議]"""
     result = await call_grok(prompt)
     await update.message.reply_text(result)
 
 async def flow(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("📊 正在分析訂單流...")
-    prompt = """Search BTC order flow: order book imbalance, liquidations, CVD, whales.
+    prompt = """分析 BTC 的訂單流和市場結構。
 
-Format in Chinese:
-📊 BTC Order Flow
+請用以下格式回覆（繁體中文）：
+📊 BTC Order Flow 分析
 ━━━━━━━━━━━━━━━━
-📕 訂單簿：[bid heavy/ask heavy/balanced]
-💥 24h清算：多$[x]M | 空$[x]M
-📈 CVD：[買壓/賣壓]
-🐋 大戶：[movements]
-💡 結論：[bullish/bearish/neutral]"""
+📕 訂單簿狀態：[買盤強/賣盤強/平衡]
+💥 清算狀況：[近期清算情況]
+📈 大戶動向：[鯨魚是買還是賣]
+
+💡 結論：[看漲/看跌/中性，原因]"""
     result = await call_grok(prompt)
     await update.message.reply_text(result)
 
 async def signal(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🎯 正在生成信號...")
-    prompt = """Analyze BTC: trend H1/H4/D1, RSI, KD, support/resistance, recommendation.
+    prompt = """基於技術分析，給出 BTC 的交易建議。
 
-Format in Chinese:
+請用以下格式回覆（繁體中文）：
 🎯 FlowAI 交易信號
 ━━━━━━━━━━━━━━━━
-📊 BTCUSDT | H1
-📈 趨勢：H1[?] H4[?] D1[?]
-🎚 KD: [超買/超賣/中性]
-📍 支撐: $[x] | 壓力: $[x]
+📊 BTCUSDT
+
+📈 趨勢：[上漲/下跌/盤整]
+🎚 技術指標：[RSI、KD 等狀態]
+
+📍 關鍵價位：
+- 支撐：$[price]
+- 壓力：$[price]
+
 🎯 建議：[做多/做空/觀望]
-• 進場：$[x]
-• 止損：$[x]
-• 止盈：$[x]
-• 信心：[x]%
+- 進場參考：$[price]
+- 止損參考：$[price]
+- 目標參考：$[price]
+
 ⚠️ 僅供參考，風險自負！"""
     result = await call_grok(prompt)
     await update.message.reply_text(result)
 
 async def liq(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🔥 正在獲取清算數據...")
-    prompt = """Search BTC liquidation data and heatmap levels.
+    prompt = """分析 BTC 的清算數據和清算熱點。
 
-Format in Chinese:
+請用以下格式回覆（繁體中文）：
 🔥 BTC 清算地圖
 ━━━━━━━━━━━━━━━━
-💰 現價：$[price]
-⬆️ 上方清算：$[level] (~$[x]M空單)
-⬇️ 下方清算：$[level] (~$[x]M多單)
-📊 24h：多$[x]M | 空$[x]M
-💡 解讀：[where price might hunt]"""
+💰 目前價格：約 $[price]
+
+⬆️ 上方清算區：$[price range] - 空單清算
+⬇️ 下方清算區：$[price range] - 多單清算
+
+📊 24h 清算：
+- 多單：約 $[amount]
+- 空單：約 $[amount]
+
+💡 解讀：[價格可能往哪個方向獵殺]"""
     result = await call_grok(prompt)
     await update.message.reply_text(result)
 
 async def arb(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🎯 正在掃描套利...")
-    prompt = """Search crypto arbitrage: funding rate arb, spot-futures basis.
+    prompt = """分析目前加密貨幣市場的套利機會。
 
-Format in Chinese:
-🎯 套利機會
+請用以下格式回覆（繁體中文）：
+🎯 套利機會掃描
 ━━━━━━━━━━━━━━━━
-💰 資金費率套利：[opportunity]
-📊 期現套利：基差[x]% 年化[x]%
-🔄 跨所價差：[any opportunity]
-⚠️ 注意手續費和滑點！"""
+💰 資金費率套利：[有無機會]
+📊 期現套利：[有無機會]
+🔄 跨所價差：[有無機會]
+
+⚠️ 注意手續費和滑點成本！"""
     result = await call_grok(prompt)
     await update.message.reply_text(result)
 
 async def ethsol(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🔷 正在對比 ETH/SOL...")
-    prompt = """Compare ETH vs SOL: price, sentiment, news.
+    prompt = """比較 ETH 和 SOL 目前的表現。
 
-Format in Chinese:
-🔷 ETH vs SOL
+請用以下格式回覆（繁體中文）：
+🔷 ETH vs SOL 對比
 ━━━━━━━━━━━━━━━━
-🔷 ETH: $[price] ([change]%) - [sentiment]
-🟣 SOL: $[price] ([change]%) - [sentiment]
-🆚 結論：[which stronger]"""
+🔷 ETH：
+- 價格：約 $[price]
+- 趨勢：[上漲/下跌/盤整]
+
+🟣 SOL：
+- 價格：約 $[price]
+- 趨勢：[上漲/下跌/盤整]
+
+🆚 結論：[哪個比較強，為什麼]"""
     result = await call_grok(prompt)
     await update.message.reply_text(result)
 
-# ═══════════════════════════════════════════════════════════════════════
 # 主程序
-# ═══════════════════════════════════════════════════════════════════════
-
 def main():
     if not TELEGRAM_TOKEN:
         print("❌ 請設置 TELEGRAM_TOKEN")
