@@ -1,4 +1,3 @@
-```python
 """
 Bybit RSA 交易客戶端 v1.1
 """
@@ -125,4 +124,3 @@ class BybitTrader:
     
     async def set_leverage(self, symbol: str, leverage: str, category: str = "linear") -> dict:
         return await self._request("POST", "/v5/position/set-leverage", {"category": category, "symbol": symbol, "buyLeverage": leverage, "sellLeverage": leverage})
-```
