@@ -35,9 +35,9 @@ def generate_signature(private_key, param_str: str) -> str:
     return base64.b64encode(signature).decode('utf-8')
 
 class BybitTrader:
-    def __init__(self, api_key: str = None, private_key_str: str = None):
-        self.api_key = api_key or BYBIT_API_KEY
-        self.private_key_str = private_key_str or BYBIT_PRIVATE_KEY
+    def __init__(self):
+        self.api_key = BYBIT_API_KEY
+        self.private_key_str = BYBIT_PRIVATE_KEY
         self.private_key = None
         self.recv_window = "5000"
         if self.private_key_str and HAS_CRYPTO:
@@ -86,7 +86,7 @@ class BybitTrader:
                     async with session.post(url, headers=headers, json=params, timeout=15) as resp:
                         return await resp.json()
         except Exception as e:
-            logger.error(f"API 請求錯誤: {e}")
+            logger.error(f"API 錯誤: {e}")
             return {"retCode": -1, "retMsg": str(e)}
     
     async def _public_request(self, endpoint: str) -> dict:
@@ -115,28 +115,21 @@ class BybitTrader:
     async def get_funding_rate(self, category: str = "linear", symbol: str = "BTCUSDT") -> dict:
         return await self._public_request(f"/v5/market/funding/history?category={category}&symbol={symbol}&limit=1")
     
-    async def place_order(self, symbol: str, side: str, qty: str, order_type: str = "Market", price: str = None, stop_loss: str = None, take_profit: str = None, category: str = "linear") -> dict:
+    async def place_order(self, symbol: str, side: str, qty: str, order_type: str = "Market", category: str = "linear") -> dict:
         params = {"category": category, "symbol": symbol, "side": side, "orderType": order_type, "qty": qty}
-        if price and order_type == "Limit":
-            params["price"] = price
-        if stop_loss:
-            params["stopLoss"] = stop_loss
-        if take_profit:
-            params["takeProfit"] = take_profit
         return await self._request("POST", "/v5/order/create", params)
     
-    async def cancel_order(self, symbol: str, order_id: str, category: str = "linear") -> dict:
-        return await self._request("POST", "/v5/order/cancel", {"category": category, "symbol": symbol, "orderId": order_id})
-    
-    async def get_open_orders(self, category: str = "linear", symbol: str = None) -> dict:
-        params = {"category": category}
-        if symbol:
-            params["symbol"] = symbol
-        return await self._request("GET", "/v5/order/realtime", params)
+    async def get_open_orders(self, category: str = "linear") -> dict:
+        return await self._request("GET", "/v5/order/realtime", {"category": category})
     
     async def set_leverage(self, symbol: str, leverage: str, category: str = "linear") -> dict:
         return await self._request("POST", "/v5/position/set-leverage", {"category": category, "symbol": symbol, "buyLeverage": leverage, "sellLeverage": leverage})
-    
-    async def close_position(self, symbol: str, side: str, qty: str, category: str = "linear") -> dict:
-        close_side = "Sell" if side == "Buy" else "Buy"
-        return await self.place_order(symbol=symbol, side=close_side, qty=qty, order_type="Market", category=category)
+```
+
+---
+
+## 📄 檔案 3：requirements.txt
+```
+python-telegram-bot==21.0
+aiohttp==3.9.1
+cryptography==42.0.0
