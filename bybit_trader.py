@@ -1,5 +1,6 @@
 """
-Bybit RSA 交易客戶端 v1.1
+Bybit RSA 交易客戶端 v1.2
+公開數據用 CoinGecko，私有 API 用 Bybit
 """
 
 import os
@@ -23,6 +24,13 @@ BYBIT_API_KEY = os.getenv("BYBIT_API_KEY", "")
 BYBIT_PRIVATE_KEY = os.getenv("BYBIT_PRIVATE_KEY", "")
 BASE_URL = "https://api.bybit.com"
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+
+# CoinGecko 幣種對應
+COINGECKO_IDS = {
+    "BTCUSDT": "bitcoin",
+    "ETHUSDT": "ethereum", 
+    "SOLUSDT": "solana"
+}
 
 def load_private_key(private_key_str: str):
     if not HAS_CRYPTO:
@@ -89,16 +97,40 @@ class BybitTrader:
             logger.error(f"API 錯誤: {e}")
             return {"retCode": -1, "retMsg": str(e)}
     
-    async def _public_request(self, endpoint: str) -> dict:
-        url = f"{BASE_URL}{endpoint}"
+    async def get_ticker(self, category: str = "linear", symbol: str = "BTCUSDT") -> dict:
+        """用 CoinGecko 獲取價格（避免 Bybit IP 封鎖）"""
+        coin_id = COINGECKO_IDS.get(symbol, "bitcoin")
+        url = f"https://api.coingecko.com/api/v3/coins/{coin_id}"
         headers = {"User-Agent": USER_AGENT}
+        
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.get(url, headers=headers, timeout=15) as resp:
-                    return await resp.json()
+                    if resp.status == 200:
+                        data = await resp.json()
+                        market = data.get("market_data", {})
+                        
+                        return {
+                            "retCode": 0,
+                            "result": {
+                                "list": [{
+                                    "symbol": symbol,
+                                    "lastPrice": str(market.get("current_price", {}).get("usd", 0)),
+                                    "price24hPcnt": str(market.get("price_change_percentage_24h", 0) / 100),
+                                    "highPrice24h": str(market.get("high_24h", {}).get("usd", 0)),
+                                    "lowPrice24h": str(market.get("low_24h", {}).get("usd", 0)),
+                                    "volume24h": str(market.get("total_volume", {}).get("usd", 0))
+                                }]
+                            }
+                        }
+                    return {"retCode": -1, "retMsg": f"CoinGecko 錯誤: {resp.status}"}
         except Exception as e:
-            logger.error(f"公開 API 錯誤: {e}")
+            logger.error(f"CoinGecko 錯誤: {e}")
             return {"retCode": -1, "retMsg": str(e)}
+    
+    async def get_funding_rate(self, category: str = "linear", symbol: str = "BTCUSDT") -> dict:
+        """資金費率暫時返回 N/A"""
+        return {"retCode": 0, "result": {"list": []}}
     
     async def get_wallet_balance(self, account_type: str = "UNIFIED") -> dict:
         return await self._request("GET", "/v5/account/wallet-balance", {"accountType": account_type})
@@ -108,12 +140,6 @@ class BybitTrader:
         if symbol:
             params["symbol"] = symbol
         return await self._request("GET", "/v5/position/list", params)
-    
-    async def get_ticker(self, category: str = "linear", symbol: str = "BTCUSDT") -> dict:
-        return await self._public_request(f"/v5/market/tickers?category={category}&symbol={symbol}")
-    
-    async def get_funding_rate(self, category: str = "linear", symbol: str = "BTCUSDT") -> dict:
-        return await self._public_request(f"/v5/market/funding/history?category={category}&symbol={symbol}&limit=1")
     
     async def place_order(self, symbol: str, side: str, qty: str, order_type: str = "Market", category: str = "linear") -> dict:
         params = {"category": category, "symbol": symbol, "side": side, "orderType": order_type, "qty": qty}
