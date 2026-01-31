@@ -1,5 +1,5 @@
 """
-Bybit RSA 交易客戶端
+Bybit RSA 交易客戶端 v1.1
 """
 
 import os
@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 BYBIT_API_KEY = os.getenv("BYBIT_API_KEY", "")
 BYBIT_PRIVATE_KEY = os.getenv("BYBIT_PRIVATE_KEY", "")
 BASE_URL = "https://api.bybit.com"
+USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
 def load_private_key(private_key_str: str):
     if not HAS_CRYPTO:
@@ -64,7 +65,8 @@ class BybitTrader:
             "X-BAPI-TIMESTAMP": timestamp,
             "X-BAPI-SIGN": signature,
             "X-BAPI-RECV-WINDOW": self.recv_window,
-            "Content-Type": "application/json"
+            "Content-Type": "application/json",
+            "User-Agent": USER_AGENT
         }
     
     async def _request(self, method: str, endpoint: str, params: dict = None) -> dict:
@@ -78,13 +80,24 @@ class BybitTrader:
                     if params:
                         query = "&".join([f"{k}={v}" for k, v in params.items()])
                         url = f"{url}?{query}"
-                    async with session.get(url, headers=headers, timeout=10) as resp:
+                    async with session.get(url, headers=headers, timeout=15) as resp:
                         return await resp.json()
                 else:
-                    async with session.post(url, headers=headers, json=params, timeout=10) as resp:
+                    async with session.post(url, headers=headers, json=params, timeout=15) as resp:
                         return await resp.json()
         except Exception as e:
             logger.error(f"API 請求錯誤: {e}")
+            return {"retCode": -1, "retMsg": str(e)}
+    
+    async def _public_request(self, endpoint: str) -> dict:
+        url = f"{BASE_URL}{endpoint}"
+        headers = {"User-Agent": USER_AGENT}
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, headers=headers, timeout=15) as resp:
+                    return await resp.json()
+        except Exception as e:
+            logger.error(f"公開 API 錯誤: {e}")
             return {"retCode": -1, "retMsg": str(e)}
     
     async def get_wallet_balance(self, account_type: str = "UNIFIED") -> dict:
@@ -97,16 +110,10 @@ class BybitTrader:
         return await self._request("GET", "/v5/position/list", params)
     
     async def get_ticker(self, category: str = "linear", symbol: str = "BTCUSDT") -> dict:
-        async with aiohttp.ClientSession() as session:
-            url = f"{BASE_URL}/v5/market/tickers?category={category}&symbol={symbol}"
-            async with session.get(url, timeout=10) as resp:
-                return await resp.json()
+        return await self._public_request(f"/v5/market/tickers?category={category}&symbol={symbol}")
     
     async def get_funding_rate(self, category: str = "linear", symbol: str = "BTCUSDT") -> dict:
-        async with aiohttp.ClientSession() as session:
-            url = f"{BASE_URL}/v5/market/funding/history?category={category}&symbol={symbol}&limit=1"
-            async with session.get(url, timeout=10) as resp:
-                return await resp.json()
+        return await self._public_request(f"/v5/market/funding/history?category={category}&symbol={symbol}&limit=1")
     
     async def place_order(self, symbol: str, side: str, qty: str, order_type: str = "Market", price: str = None, stop_loss: str = None, take_profit: str = None, category: str = "linear") -> dict:
         params = {"category": category, "symbol": symbol, "side": side, "orderType": order_type, "qty": qty}
