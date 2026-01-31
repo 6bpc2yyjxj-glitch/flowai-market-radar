@@ -1,20 +1,23 @@
 """
-FlowAI Market Radar v3.2
-即時價格（CoinGecko）+ AI 分析（Grok）
+FlowAI 交易機器人 v4.0
+即時價格 + AI 分析 + Bybit 交易
 """
 
 import os
 import asyncio
 import logging
 from datetime import datetime
-from telegram import Update
-from telegram.ext import Application, CommandHandler, ContextTypes
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 import aiohttp
 
-# 配置
+from bybit_trader import BybitTrader
+
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "")
 GROK_API_KEY = os.getenv("GROK_API_KEY", "")
 ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID", "")
+BYBIT_API_KEY = os.getenv("BYBIT_API_KEY", "")
+BYBIT_PRIVATE_KEY = os.getenv("BYBIT_PRIVATE_KEY", "")
 
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -22,15 +25,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# CoinGecko API（免費即時價格）
+trader = BybitTrader()
+
 async def get_crypto_prices():
     url = "https://api.coingecko.com/api/v3/simple/price"
-    params = {
-        "ids": "bitcoin,ethereum,solana",
-        "vs_currencies": "usd",
-        "include_24hr_change": "true",
-        "include_market_cap": "true"
-    }
+    params = {"ids": "bitcoin,ethereum,solana", "vs_currencies": "usd", "include_24hr_change": "true"}
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(url, params=params, timeout=10) as resp:
@@ -52,252 +51,308 @@ async def get_fear_greed_index():
         logger.error(f"Fear/Greed Error: {e}")
     return None
 
-# Grok API（分析）
 async def call_grok(prompt: str) -> str:
     if not GROK_API_KEY:
         return "❌ Grok API 未配置"
-    
     url = "https://api.x.ai/v1/chat/completions"
-    headers = {
-        "Authorization": f"Bearer {GROK_API_KEY}",
-        "Content-Type": "application/json"
-    }
-    payload = {
-        "model": "grok-4-1-fast-reasoning",
-        "messages": [{"role": "user", "content": prompt}],
-        "temperature": 0.7
-    }
+    headers = {"Authorization": f"Bearer {GROK_API_KEY}", "Content-Type": "application/json"}
+    payload = {"model": "grok-4-1-fast-reasoning", "messages": [{"role": "user", "content": prompt}], "temperature": 0.7}
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.post(url, headers=headers, json=payload, timeout=60) as resp:
+            async with session.post(url, headers=headers, json=payload, timeout=90) as resp:
                 if resp.status == 200:
                     data = await resp.json()
                     return data["choices"][0]["message"]["content"]
                 return f"❌ API 錯誤: {resp.status}"
-    except asyncio.TimeoutError:
-        return "❌ 請求超時"
     except Exception as e:
         return f"❌ 錯誤: {str(e)}"
 
-# 命令
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     welcome = """
-🎯 *FlowAI 市場雷達 v3.2*
+🎯 *FlowAI 交易系統 v4.0*
 ━━━━━━━━━━━━━━━━━━━━━
-⚡ 即時價格 + AI 分析
+⚡ 即時價格 + AI 分析 + 自動交易
 
-📊 *情緒分析：*
+📊 *市場分析：*
 /btc - BTC 即時分析
-/meme - MEME 熱幣 TOP 5
-/ethsol - ETH/SOL 對比
-
-🥇 *外匯黃金：*
-/gold - 黃金避險雷達
-/calendar - 經濟日曆
-
-💰 *套利工具：*
-/funding - 資金費率
-/arb - 套利機會
-/liq - 清算地圖
-
-🔥 *Order Flow：*
-/flow - 訂單流分析
-/signal - 交易信號
-
-⚡ *綜合：*
 /radar - 全景報告
 
+💰 *交易功能：*
+/balance - 查詢餘額
+/position - 查詢持倉
+/orders - 未成交訂單
+
+🎯 *快速交易：*
+/long - 做多 BTC
+/short - 做空 BTC
+/close - 平倉
+
+⚙️ *設定：*
+/leverage - 設置槓桿
+/status - 系統狀態
+
 ━━━━━━━━━━━━━━━━━━━━━
-_FlowAI v3.2 - 即時資訊，快人一步_
+_FlowAI v4.0 - 自動交易，智能決策_
 """
     await update.message.reply_text(welcome, parse_mode='Markdown')
 
 async def btc(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🔶 正在獲取 BTC 即時數據...")
-    
-    prices = await get_crypto_prices()
+    await update.message.reply_text("🔶 正在獲取 BTC 數據...")
+    ticker = await trader.get_ticker(symbol="BTCUSDT")
+    funding = await trader.get_funding_rate(symbol="BTCUSDT")
     fng = await get_fear_greed_index()
     
-    if prices and "bitcoin" in prices:
-        btc_price = prices["bitcoin"]["usd"]
-        btc_change = prices["bitcoin"].get("usd_24h_change", 0)
+    if ticker.get("retCode") == 0:
+        data = ticker["result"]["list"][0]
+        price = float(data["lastPrice"])
+        change_24h = float(data["price24hPcnt"]) * 100
+        high_24h = float(data["highPrice24h"])
+        low_24h = float(data["lowPrice24h"])
+        volume = float(data["volume24h"])
+        
+        funding_rate = "N/A"
+        if funding.get("retCode") == 0 and funding["result"]["list"]:
+            funding_rate = float(funding["result"]["list"][0]["fundingRate"]) * 100
+        
         fng_value = fng.get("value", "N/A") if fng else "N/A"
         fng_text = fng.get("value_classification", "N/A") if fng else "N/A"
         
-        prompt = f"""根據以下即時數據分析 BTC：
-即時價格：${btc_price:,.2f}
-24h 漲跌：{btc_change:.2f}%
-恐懼貪婪指數：{fng_value} ({fng_text})
+        prompt = f"""根據 Bybit 即時數據分析 BTC：
+價格：${price:,.2f}
+24h 漲跌：{change_24h:.2f}%
+24h 高：${high_24h:,.2f}
+24h 低：${low_24h:,.2f}
+資金費率：{funding_rate}%
+恐懼貪婪：{fng_value} ({fng_text})
 
-請用繁體中文簡短分析：
-1. 目前市場情緒
-2. 短線建議
-3. 關鍵支撐壓力位"""
+用繁體中文簡短分析：市場情緒、短線建議、關鍵價位"""
         
         analysis = await call_grok(prompt)
         
-        result = f"""🔶 BTC 即時分析
+        result = f"""🔶 BTC/USDT 即時分析 (Bybit)
 ━━━━━━━━━━━━━━━━
-💰 價格：${btc_price:,.2f}
-📊 24h：{btc_change:+.2f}%
-😱 恐懼貪婪：{fng_value} ({fng_text})
-⏰ 更新：{datetime.now().strftime('%H:%M')}
+💰 價格：${price:,.2f}
+📊 24h：{change_24h:+.2f}%
+📈 高：${high_24h:,.2f}
+📉 低：${low_24h:,.2f}
+💸 資金費率：{funding_rate:.4f}%
+😱 恐懼貪婪：{fng_value}
+⏰ {datetime.now().strftime('%H:%M:%S')}
 
 📝 AI 分析：
 {analysis}"""
     else:
-        result = "❌ 無法獲取價格數據"
-    
+        result = f"❌ 錯誤: {ticker.get('retMsg', '未知錯誤')}"
     await update.message.reply_text(result)
 
-async def ethsol(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🔷 正在獲取 ETH/SOL 數據...")
-    
-    prices = await get_crypto_prices()
-    
-    if prices:
-        eth_price = prices.get("ethereum", {}).get("usd", 0)
-        eth_change = prices.get("ethereum", {}).get("usd_24h_change", 0)
-        sol_price = prices.get("solana", {}).get("usd", 0)
-        sol_change = prices.get("solana", {}).get("usd_24h_change", 0)
-        
-        prompt = f"""比較 ETH 和 SOL：
-ETH：${eth_price:,.2f}（24h: {eth_change:+.2f}%）
-SOL：${sol_price:,.2f}（24h: {sol_change:+.2f}%）
-請用繁體中文簡短分析：哪個比較強？"""
-        
-        analysis = await call_grok(prompt)
-        
-        result = f"""🔷 ETH vs SOL 即時對比
-━━━━━━━━━━━━━━━━
-🔷 ETH：${eth_price:,.2f} ({eth_change:+.2f}%)
-🟣 SOL：${sol_price:,.2f} ({sol_change:+.2f}%)
-⏰ 更新：{datetime.now().strftime('%H:%M')}
-
-📝 AI 分析：
-{analysis}"""
+async def balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = str(update.effective_chat.id)
+    if chat_id != ADMIN_CHAT_ID:
+        await update.message.reply_text("⛔ 僅管理員可用")
+        return
+    await update.message.reply_text("💰 正在查詢餘額...")
+    result = await trader.get_wallet_balance()
+    if result.get("retCode") == 0:
+        coins = result.get("result", {}).get("list", [{}])[0].get("coin", [])
+        msg = "💰 Bybit 帳戶餘額\n━━━━━━━━━━━━━━━━\n"
+        total_usd = 0
+        for coin in coins:
+            bal = float(coin.get("walletBalance", 0))
+            if bal > 0:
+                usd_value = float(coin.get("usdValue", 0))
+                total_usd += usd_value
+                msg += f"💎 {coin['coin']}: {bal:.4f} (${usd_value:,.2f})\n"
+        msg += f"\n💵 總資產：${total_usd:,.2f}"
     else:
-        result = "❌ 無法獲取價格數據"
+        msg = f"❌ 錯誤: {result.get('retMsg', '未知錯誤')}"
+    await update.message.reply_text(msg)
+
+async def position(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = str(update.effective_chat.id)
+    if chat_id != ADMIN_CHAT_ID:
+        await update.message.reply_text("⛔ 僅管理員可用")
+        return
+    await update.message.reply_text("📊 正在查詢持倉...")
+    result = await trader.get_positions()
+    if result.get("retCode") == 0:
+        positions = result.get("result", {}).get("list", [])
+        if not positions or all(float(p.get("size", 0)) == 0 for p in positions):
+            msg = "📊 目前無持倉"
+        else:
+            msg = "📊 Bybit 持倉\n━━━━━━━━━━━━━━━━\n"
+            for pos in positions:
+                size = float(pos.get("size", 0))
+                if size > 0:
+                    symbol = pos.get("symbol")
+                    side = pos.get("side")
+                    entry = float(pos.get("avgPrice", 0))
+                    pnl = float(pos.get("unrealisedPnl", 0))
+                    emoji = "🟢" if pnl >= 0 else "🔴"
+                    msg += f"{emoji} {symbol} {side}\n   數量：{size}\n   進場：${entry:,.2f}\n   盈虧：${pnl:,.2f}\n"
+    else:
+        msg = f"❌ 錯誤: {result.get('retMsg')}"
+    await update.message.reply_text(msg)
+
+async def orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = str(update.effective_chat.id)
+    if chat_id != ADMIN_CHAT_ID:
+        await update.message.reply_text("⛔ 僅管理員可用")
+        return
+    result = await trader.get_open_orders()
+    if result.get("retCode") == 0:
+        order_list = result.get("result", {}).get("list", [])
+        if not order_list:
+            msg = "📋 目前無未成交訂單"
+        else:
+            msg = "📋 未成交訂單\n━━━━━━━━━━━━━━━━\n"
+            for order in order_list:
+                msg += f"• {order['symbol']} {order['side']} {order['qty']}\n"
+    else:
+        msg = f"❌ 錯誤: {result.get('retMsg')}"
+    await update.message.reply_text(msg)
+
+async def long_btc(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = str(update.effective_chat.id)
+    if chat_id != ADMIN_CHAT_ID:
+        await update.message.reply_text("⛔ 僅管理員可用")
+        return
+    keyboard = [[InlineKeyboardButton("✅ 確認做多 0.001 BTC", callback_data="confirm_long_0.001"), InlineKeyboardButton("❌ 取消", callback_data="cancel_order")]]
+    await update.message.reply_text("🟢 確認做多 BTC？\n數量：0.001 BTC\n類型：市價單", reply_markup=InlineKeyboardMarkup(keyboard))
+
+async def short_btc(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = str(update.effective_chat.id)
+    if chat_id != ADMIN_CHAT_ID:
+        await update.message.reply_text("⛔ 僅管理員可用")
+        return
+    keyboard = [[InlineKeyboardButton("✅ 確認做空 0.001 BTC", callback_data="confirm_short_0.001"), InlineKeyboardButton("❌ 取消", callback_data="cancel_order")]]
+    await update.message.reply_text("🔴 確認做空 BTC？\n數量：0.001 BTC\n類型：市價單", reply_markup=InlineKeyboardMarkup(keyboard))
+
+async def close_position(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = str(update.effective_chat.id)
+    if chat_id != ADMIN_CHAT_ID:
+        await update.message.reply_text("⛔ 僅管理員可用")
+        return
+    keyboard = [[InlineKeyboardButton("✅ 確認平倉", callback_data="confirm_close"), InlineKeyboardButton("❌ 取消", callback_data="cancel_order")]]
+    await update.message.reply_text("⚠️ 確認平掉所有 BTC 持倉？", reply_markup=InlineKeyboardMarkup(keyboard))
+
+async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    data = query.data
     
-    await update.message.reply_text(result)
+    if data == "cancel_order":
+        await query.edit_message_text("❌ 已取消")
+        return
+    
+    if data.startswith("confirm_long_"):
+        qty = data.split("_")[-1]
+        await query.edit_message_text("🔄 正在下單...")
+        result = await trader.place_order(symbol="BTCUSDT", side="Buy", qty=qty, order_type="Market")
+        if result.get("retCode") == 0:
+            msg = f"✅ 做多成功！\n訂單ID: {result['result']['orderId']}"
+        else:
+            msg = f"❌ 下單失敗: {result.get('retMsg')}"
+        await query.edit_message_text(msg)
+    
+    elif data.startswith("confirm_short_"):
+        qty = data.split("_")[-1]
+        await query.edit_message_text("🔄 正在下單...")
+        result = await trader.place_order(symbol="BTCUSDT", side="Sell", qty=qty, order_type="Market")
+        if result.get("retCode") == 0:
+            msg = f"✅ 做空成功！\n訂單ID: {result['result']['orderId']}"
+        else:
+            msg = f"❌ 下單失敗: {result.get('retMsg')}"
+        await query.edit_message_text(msg)
+    
+    elif data == "confirm_close":
+        await query.edit_message_text("🔄 正在平倉...")
+        positions = await trader.get_positions(symbol="BTCUSDT")
+        if positions.get("retCode") == 0:
+            pos_list = positions.get("result", {}).get("list", [])
+            for pos in pos_list:
+                size = float(pos.get("size", 0))
+                if size > 0:
+                    side = pos.get("side")
+                    result = await trader.close_position(symbol="BTCUSDT", side=side, qty=str(size))
+                    if result.get("retCode") == 0:
+                        await query.edit_message_text("✅ 平倉成功！")
+                    else:
+                        await query.edit_message_text(f"❌ 平倉失敗: {result.get('retMsg')}")
+                    return
+            await query.edit_message_text("📊 目前無持倉")
+        else:
+            await query.edit_message_text(f"❌ 錯誤: {positions.get('retMsg')}")
+
+async def set_leverage(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = str(update.effective_chat.id)
+    if chat_id != ADMIN_CHAT_ID:
+        await update.message.reply_text("⛔ 僅管理員可用")
+        return
+    if not context.args:
+        await update.message.reply_text("用法：/leverage 10")
+        return
+    lev = context.args[0]
+    result = await trader.set_leverage(symbol="BTCUSDT", leverage=lev)
+    if result.get("retCode") == 0:
+        msg = f"✅ 槓桿已設置為 {lev}x"
+    else:
+        msg = f"❌ 設置失敗: {result.get('retMsg')}"
+    await update.message.reply_text(msg)
+
+async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    api_status = "✅" if BYBIT_API_KEY else "❌"
+    key_status = "✅" if BYBIT_PRIVATE_KEY else "❌"
+    grok_status = "✅" if GROK_API_KEY else "❌"
+    msg = f"""⚙️ FlowAI 系統狀態
+━━━━━━━━━━━━━━━━
+🔑 Bybit API Key: {api_status}
+🔐 RSA 私鑰: {key_status}
+🤖 Grok API: {grok_status}
+⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+版本：v4.0"""
+    await update.message.reply_text(msg)
 
 async def radar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🌐 正在生成全景報告...")
-    
-    prices = await get_crypto_prices()
+    btc_ticker = await trader.get_ticker(symbol="BTCUSDT")
+    eth_ticker = await trader.get_ticker(symbol="ETHUSDT")
+    sol_ticker = await trader.get_ticker(symbol="SOLUSDT")
     fng = await get_fear_greed_index()
     
-    if prices:
-        btc = prices.get("bitcoin", {})
-        eth = prices.get("ethereum", {})
-        sol = prices.get("solana", {})
-        fng_value = fng.get("value", "N/A") if fng else "N/A"
-        fng_text = fng.get("value_classification", "N/A") if fng else "N/A"
-        
-        result = f"""🌐 FlowAI 即時全景報告
-━━━━━━━━━━━━━━━━
-📊 恐懼貪婪：{fng_value} ({fng_text})
-
-🔶 BTC：${btc.get('usd', 0):,.0f} ({btc.get('usd_24h_change', 0):+.1f}%)
-🔷 ETH：${eth.get('usd', 0):,.0f} ({eth.get('usd_24h_change', 0):+.1f}%)
-🟣 SOL：${sol.get('usd', 0):,.0f} ({sol.get('usd_24h_change', 0):+.1f}%)
-
-⏰ 更新：{datetime.now().strftime('%Y-%m-%d %H:%M')}
-━━━━━━━━━━━━━━━━
-💡 輸入 /btc 查看詳細分析"""
-    else:
-        result = "❌ 無法獲取數據"
+    msg = "🌐 FlowAI 即時全景報告\n━━━━━━━━━━━━━━━━\n"
+    fng_value = fng.get("value", "N/A") if fng else "N/A"
+    msg += f"😱 恐懼貪婪：{fng_value}\n\n"
     
-    await update.message.reply_text(result)
-
-async def gold(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🥇 正在分析黃金...")
-    prompt = """請分析目前黃金 XAU/USD 的走勢，用繁體中文簡短回覆：
-1. 大約價格
-2. 趨勢分析
-3. 短線建議"""
-    result = await call_grok(prompt)
-    await update.message.reply_text(result)
-
-async def meme(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🐸 正在分析 MEME 幣...")
-    prompt = """列出目前最熱門的 5 個 MEME 幣，用繁體中文回覆"""
-    result = await call_grok(prompt)
-    await update.message.reply_text(result)
-
-async def funding(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("💰 正在分析資金費率...")
-    prompt = """說明 BTC、ETH、SOL 永續合約資金費率的狀況，用繁體中文簡短回覆"""
-    result = await call_grok(prompt)
-    await update.message.reply_text(result)
-
-async def calendar(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("📅 正在獲取經濟日曆...")
-    prompt = f"""今天是 {datetime.now().strftime('%Y-%m-%d')}，列出近期重要經濟事件，用繁體中文回覆，時間轉為台灣時間"""
-    result = await call_grok(prompt)
-    await update.message.reply_text(result)
-
-async def flow(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("📊 正在分析訂單流...")
-    prices = await get_crypto_prices()
-    btc_price = prices.get("bitcoin", {}).get("usd", 0) if prices else 0
-    prompt = f"""BTC 現價 ${btc_price:,.0f}，分析訂單流和市場結構，用繁體中文簡短回覆"""
-    result = await call_grok(prompt)
-    await update.message.reply_text(result)
-
-async def signal(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🎯 正在生成交易信號...")
-    prices = await get_crypto_prices()
-    fng = await get_fear_greed_index()
+    for name, ticker in [("BTC", btc_ticker), ("ETH", eth_ticker), ("SOL", sol_ticker)]:
+        if ticker.get("retCode") == 0:
+            data = ticker["result"]["list"][0]
+            price = float(data["lastPrice"])
+            change = float(data["price24hPcnt"]) * 100
+            emoji = "🟢" if change >= 0 else "🔴"
+            msg += f"{emoji} {name}: ${price:,.2f} ({change:+.2f}%)\n"
     
-    if prices:
-        btc = prices.get("bitcoin", {})
-        fng_value = fng.get("value", "N/A") if fng else "N/A"
-        prompt = f"""根據數據生成 BTC 交易信號：
-現價：${btc.get('usd', 0):,.2f}
-24h：{btc.get('usd_24h_change', 0):.2f}%
-恐懼貪婪：{fng_value}
-
-用繁體中文回覆：建議、進場、止損、止盈"""
-        result = await call_grok(prompt)
-    else:
-        result = "❌ 無法獲取數據"
-    await update.message.reply_text(result)
-
-async def liq(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🔥 正在分析清算數據...")
-    prices = await get_crypto_prices()
-    btc_price = prices.get("bitcoin", {}).get("usd", 0) if prices else 0
-    prompt = f"""BTC 現價 ${btc_price:,.0f}，分析清算數據，用繁體中文回覆"""
-    result = await call_grok(prompt)
-    await update.message.reply_text(result)
-
-async def arb(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🎯 正在掃描套利...")
-    prompt = """分析目前加密貨幣套利機會，用繁體中文簡短回覆"""
-    result = await call_grok(prompt)
-    await update.message.reply_text(result)
+    msg += f"\n⏰ {datetime.now().strftime('%H:%M:%S')}"
+    await update.message.reply_text(msg)
 
 def main():
     if not TELEGRAM_TOKEN:
         print("❌ 請設置 TELEGRAM_TOKEN")
         return
-    
-    logger.info("🚀 FlowAI Bot v3.2 啟動中...")
+    logger.info("🚀 FlowAI Trading Bot v4.0 啟動中...")
     app = Application.builder().token(TELEGRAM_TOKEN).build()
     
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("btc", btc))
-    app.add_handler(CommandHandler("meme", meme))
-    app.add_handler(CommandHandler("gold", gold))
-    app.add_handler(CommandHandler("funding", funding))
-    app.add_handler(CommandHandler("calendar", calendar))
     app.add_handler(CommandHandler("radar", radar))
-    app.add_handler(CommandHandler("flow", flow))
-    app.add_handler(CommandHandler("signal", signal))
-    app.add_handler(CommandHandler("liq", liq))
-    app.add_handler(CommandHandler("arb", arb))
-    app.add_handler(CommandHandler("ethsol", ethsol))
+    app.add_handler(CommandHandler("status", status))
+    app.add_handler(CommandHandler("balance", balance))
+    app.add_handler(CommandHandler("position", position))
+    app.add_handler(CommandHandler("orders", orders))
+    app.add_handler(CommandHandler("long", long_btc))
+    app.add_handler(CommandHandler("short", short_btc))
+    app.add_handler(CommandHandler("close", close_position))
+    app.add_handler(CommandHandler("leverage", set_leverage))
+    app.add_handler(CallbackQueryHandler(button_callback))
     
     logger.info("✅ Bot 運行中！")
     app.run_polling(drop_pending_updates=True)
