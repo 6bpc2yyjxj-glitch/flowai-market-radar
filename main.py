@@ -45,12 +45,14 @@ async def call_grok(prompt: str, use_search: bool = True) -> str:
         "temperature": 0.7
     }
     
-    if use_search:
-        payload["search_parameters"] = {
-            "mode": "auto",
-            "return_citations": True,
-            "from_date": datetime.now().strftime("%Y-%m-%d")
-        }
+        # 搜尋功能已停用
+    # if use_search:
+    #     payload["search_parameters"] = {
+    #         "mode": "auto",
+    #         "return_citations": True,
+    #         "from_date": datetime.now().strftime("%Y-%m-%d")
+    #     }
+
     
     try:
         async with aiohttp.ClientSession() as session:
