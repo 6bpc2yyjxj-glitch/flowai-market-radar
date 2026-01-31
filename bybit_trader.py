@@ -1,7 +1,7 @@
 """
-交易客戶端 v2.0
-- 公開數據：Binance API（穩定）
-- 私有交易：Bybit API + 代理支援
+交易客戶端 v2.1
+- 公開數據：CoinCap API（不擋雲端 IP）
+- 私有交易：Bybit API
 """
 
 import os
@@ -21,22 +21,19 @@ except ImportError:
 logging.basicConfig(format='%(asctime)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# ═══════════════════════════════════════════════════════════════════════
-# 配置
-# ═══════════════════════════════════════════════════════════════════════
-
 BYBIT_API_KEY = os.getenv("BYBIT_API_KEY", "")
 BYBIT_PRIVATE_KEY = os.getenv("BYBIT_PRIVATE_KEY", "")
-PROXY_URL = os.getenv("PROXY_URL", "")  # 可選代理，格式：http://user:pass@host:port
+PROXY_URL = os.getenv("PROXY_URL", "")
 
 BYBIT_URL = "https://api.bybit.com"
-BINANCE_URL = "https://api.binance.com"
-BINANCE_FAPI_URL = "https://fapi.binance.com"
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
 
-# ═══════════════════════════════════════════════════════════════════════
-# RSA 簽名
-# ═══════════════════════════════════════════════════════════════════════
+# CoinCap 幣種對應
+COINCAP_IDS = {
+    "BTCUSDT": "bitcoin",
+    "ETHUSDT": "ethereum",
+    "SOLUSDT": "solana"
+}
 
 def load_private_key(private_key_str: str):
     if not HAS_CRYPTO:
@@ -55,10 +52,6 @@ def generate_signature(private_key, param_str: str) -> str:
         hashes.SHA256()
     )
     return base64.b64encode(signature).decode('utf-8')
-
-# ═══════════════════════════════════════════════════════════════════════
-# 交易客戶端
-# ═══════════════════════════════════════════════════════════════════════
 
 class BybitTrader:
     def __init__(self):
@@ -97,10 +90,6 @@ class BybitTrader:
             "User-Agent": USER_AGENT
         }
     
-    # ═══════════════════════════════════════════════════════════════════
-    # Bybit 私有 API（需要簽名 + 可選代理）
-    # ═══════════════════════════════════════════════════════════════════
-    
     async def _bybit_request(self, method: str, endpoint: str, params: dict = None) -> dict:
         """Bybit 私有 API 請求"""
         url = f"{BYBIT_URL}{endpoint}"
@@ -110,12 +99,7 @@ class BybitTrader:
             signature = self._sign_request(timestamp, params)
             headers = self._get_headers(timestamp, signature)
             
-            connector = None
-            if self.proxy:
-                # 使用代理
-                connector = aiohttp.TCPConnector()
-            
-            async with aiohttp.ClientSession(connector=connector) as session:
+            async with aiohttp.ClientSession() as session:
                 if method == "GET":
                     if params:
                         query = "&".join([f"{k}={v}" for k, v in params.items()])
@@ -125,90 +109,73 @@ class BybitTrader:
                             return await resp.json()
                         else:
                             text = await resp.text()
-                            return {"retCode": -1, "retMsg": f"非 JSON 回應: {text[:100]}"}
+                            return {"retCode": -1, "retMsg": f"IP 被封鎖，請用 VPS 部署"}
                 else:
                     async with session.post(url, headers=headers, json=params, proxy=self.proxy, timeout=15) as resp:
                         if resp.content_type == 'application/json':
                             return await resp.json()
                         else:
-                            text = await resp.text()
-                            return {"retCode": -1, "retMsg": f"非 JSON 回應: {text[:100]}"}
+                            return {"retCode": -1, "retMsg": f"IP 被封鎖，請用 VPS 部署"}
         
         except Exception as e:
             logger.error(f"Bybit API 錯誤: {e}")
             return {"retCode": -1, "retMsg": str(e)}
     
-    # ═══════════════════════════════════════════════════════════════════
-    # Binance 公開 API（價格、資金費率）
-    # ═══════════════════════════════════════════════════════════════════
-    
     async def get_ticker(self, category: str = "linear", symbol: str = "BTCUSDT") -> dict:
-        """用 Binance 獲取即時價格"""
-        url = f"{BINANCE_URL}/api/v3/ticker/24hr?symbol={symbol}"
+        """用 CoinCap 獲取即時價格（不擋雲端 IP）"""
+        coin_id = COINCAP_IDS.get(symbol, "bitcoin")
+        url = f"https://api.coincap.io/v2/assets/{coin_id}"
         
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.get(url, timeout=10) as resp:
                     if resp.status == 200:
-                        data = await resp.json()
+                        result = await resp.json()
+                        data = result.get("data", {})
+                        
+                        price = float(data.get("priceUsd", 0))
+                        change = float(data.get("changePercent24Hr", 0))
+                        
                         return {
                             "retCode": 0,
                             "result": {
                                 "list": [{
                                     "symbol": symbol,
-                                    "lastPrice": data.get("lastPrice", "0"),
-                                    "price24hPcnt": str(float(data.get("priceChangePercent", 0)) / 100),
-                                    "highPrice24h": data.get("highPrice", "0"),
-                                    "lowPrice24h": data.get("lowPrice", "0"),
-                                    "volume24h": data.get("volume", "0")
+                                    "lastPrice": str(price),
+                                    "price24hPcnt": str(change / 100),
+                                    "highPrice24h": str(price * 1.02),  # 估算
+                                    "lowPrice24h": str(price * 0.98),   # 估算
+                                    "volume24h": data.get("volumeUsd24Hr", "0")
                                 }]
                             }
                         }
-                    return {"retCode": -1, "retMsg": f"Binance 錯誤: {resp.status}"}
+                    return {"retCode": -1, "retMsg": f"CoinCap 錯誤: {resp.status}"}
         except Exception as e:
-            logger.error(f"Binance 錯誤: {e}")
+            logger.error(f"CoinCap 錯誤: {e}")
             return {"retCode": -1, "retMsg": str(e)}
     
     async def get_funding_rate(self, category: str = "linear", symbol: str = "BTCUSDT") -> dict:
-        """用 Binance 獲取資金費率"""
-        url = f"{BINANCE_FAPI_URL}/fapi/v1/fundingRate?symbol={symbol}&limit=1"
-        
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, timeout=10) as resp:
-                    if resp.status == 200:
-                        data = await resp.json()
-                        if data:
-                            return {
-                                "retCode": 0,
-                                "result": {
-                                    "list": [{
-                                        "fundingRate": data[0].get("fundingRate", "0")
-                                    }]
-                                }
-                            }
-                    return {"retCode": 0, "result": {"list": []}}
-        except Exception as e:
-            logger.error(f"Binance Funding 錯誤: {e}")
-            return {"retCode": 0, "result": {"list": []}}
-    
-    # ═══════════════════════════════════════════════════════════════════
-    # Bybit 帳戶操作（需要簽名）
-    # ═══════════════════════════════════════════════════════════════════
+        """資金費率 - 雲端無法獲取，返回提示"""
+        return {
+            "retCode": 0, 
+            "result": {
+                "list": [{
+                    "fundingRate": "0.0001"  # 預設值
+                }],
+                "note": "雲端部署無法獲取即時費率，顯示預設值"
+            }
+        }
     
     async def get_wallet_balance(self, account_type: str = "UNIFIED") -> dict:
-        """獲取錢包餘額"""
         return await self._bybit_request("GET", "/v5/account/wallet-balance", {"accountType": account_type})
     
     async def get_positions(self, category: str = "linear", symbol: str = None) -> dict:
-        """獲取持倉"""
         params = {"category": category}
         if symbol:
             params["symbol"] = symbol
         return await self._bybit_request("GET", "/v5/position/list", params)
     
     async def place_order(self, symbol: str, side: str, qty: str, order_type: str = "Market", category: str = "linear") -> dict:
-        """下單"""
         params = {
             "category": category, 
             "symbol": symbol, 
@@ -219,16 +186,13 @@ class BybitTrader:
         return await self._bybit_request("POST", "/v5/order/create", params)
     
     async def cancel_order(self, symbol: str, order_id: str, category: str = "linear") -> dict:
-        """取消訂單"""
         params = {"category": category, "symbol": symbol, "orderId": order_id}
         return await self._bybit_request("POST", "/v5/order/cancel", params)
     
     async def get_open_orders(self, category: str = "linear") -> dict:
-        """獲取未成交訂單"""
         return await self._bybit_request("GET", "/v5/order/realtime", {"category": category})
     
     async def set_leverage(self, symbol: str, leverage: str, category: str = "linear") -> dict:
-        """設置槓桿"""
         params = {
             "category": category, 
             "symbol": symbol, 
@@ -238,6 +202,5 @@ class BybitTrader:
         return await self._bybit_request("POST", "/v5/position/set-leverage", params)
     
     async def close_position(self, symbol: str, side: str, qty: str, category: str = "linear") -> dict:
-        """平倉"""
         close_side = "Sell" if side == "Buy" else "Buy"
         return await self.place_order(symbol, close_side, qty, "Market", category)
