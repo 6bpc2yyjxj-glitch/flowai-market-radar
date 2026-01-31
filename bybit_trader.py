@@ -1,6 +1,6 @@
 """
-Bybit RSA 交易客戶端 v1.2
-公開數據用 CoinGecko，私有 API 用 Bybit
+Bybit RSA 交易客戶端 v1.3
+公開數據用 CoinGecko + 快取，私有 API 用 Bybit
 """
 
 import os
@@ -31,6 +31,11 @@ COINGECKO_IDS = {
     "ETHUSDT": "ethereum", 
     "SOLUSDT": "solana"
 }
+
+# 價格快取（避免 429 限流）
+_price_cache = {}
+_cache_time = {}
+CACHE_DURATION = 60  # 快取 60 秒
 
 def load_private_key(private_key_str: str):
     if not HAS_CRYPTO:
@@ -98,7 +103,15 @@ class BybitTrader:
             return {"retCode": -1, "retMsg": str(e)}
     
     async def get_ticker(self, category: str = "linear", symbol: str = "BTCUSDT") -> dict:
-        """用 CoinGecko 獲取價格（避免 Bybit IP 封鎖）"""
+        """用 CoinGecko 獲取價格（有快取避免 429）"""
+        global _price_cache, _cache_time
+        
+        # 檢查快取
+        now = time.time()
+        if symbol in _price_cache and (now - _cache_time.get(symbol, 0)) < CACHE_DURATION:
+            logger.info(f"📦 使用快取: {symbol}")
+            return _price_cache[symbol]
+        
         coin_id = COINGECKO_IDS.get(symbol, "bitcoin")
         url = f"https://api.coingecko.com/api/v3/coins/{coin_id}"
         headers = {"User-Agent": USER_AGENT}
@@ -110,7 +123,7 @@ class BybitTrader:
                         data = await resp.json()
                         market = data.get("market_data", {})
                         
-                        return {
+                        result = {
                             "retCode": 0,
                             "result": {
                                 "list": [{
@@ -123,8 +136,26 @@ class BybitTrader:
                                 }]
                             }
                         }
+                        
+                        # 存入快取
+                        _price_cache[symbol] = result
+                        _cache_time[symbol] = now
+                        
+                        return result
+                    
+                    elif resp.status == 429:
+                        # 限流時使用舊快取
+                        if symbol in _price_cache:
+                            logger.warning(f"⚠️ 429 限流，使用舊快取: {symbol}")
+                            return _price_cache[symbol]
+                        return {"retCode": -1, "retMsg": "API 限流，請稍後再試"}
+                    
                     return {"retCode": -1, "retMsg": f"CoinGecko 錯誤: {resp.status}"}
         except Exception as e:
+            # 錯誤時使用舊快取
+            if symbol in _price_cache:
+                logger.warning(f"⚠️ 錯誤，使用舊快取: {symbol}")
+                return _price_cache[symbol]
             logger.error(f"CoinGecko 錯誤: {e}")
             return {"retCode": -1, "retMsg": str(e)}
     
